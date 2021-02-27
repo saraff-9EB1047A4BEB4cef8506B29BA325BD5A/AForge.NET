@@ -70,7 +70,7 @@ namespace AForge.Video.DirectShow
         private bool provideSnapshots = false;
 
         // JPEG encoding preference
-        private bool preferJpegEncoding = true;
+        private bool preferJpegEncoding = false;
         // check if JPEG encoding is enabled
         private bool jpegEncodingEnabled = false;
 
@@ -88,9 +88,6 @@ namespace AForge.Video.DirectShow
 
         // video capture source object
         private object sourceObject = null;
-        
-        // time of starting the DirectX graph
-        private DateTime startTime = new DateTime( );
 
         // dummy object to lock for synchronization
         private object sync = new object( );
@@ -1242,7 +1239,6 @@ namespace AForge.Video.DirectShow
 
                     if ( ( isSapshotSupported ) && ( provideSnapshots ) )
                     {
-                        startTime = DateTime.Now;
                         videoControl.SetMode( pinStillImage, VideoControlFlags.ExternalTriggerEnable );
                     }
 
@@ -1711,114 +1707,88 @@ namespace AForge.Video.DirectShow
         /// 
         /// <param name="image">New snapshot's image.</param>
         /// 
-        private void OnSnapshotFrame( Bitmap image )
-        {
-            TimeSpan timeSinceStarted = DateTime.Now - startTime;
-
-            // TODO: need to find better way to ignore the first snapshot, which is sent
-            // automatically (or better disable it)
-            if ( timeSinceStarted.TotalSeconds >= 4 )
-            {
-                if ( ( !stopEvent.WaitOne( 0, false ) ) && ( SnapshotFrame != null ) )
-                    SnapshotFrame( this, new NewFrameEventArgs( image ) );
+        private void OnSnapshotFrame(Bitmap image) {
+            if((!stopEvent.WaitOne(0, false)) && (SnapshotFrame != null)) {
+                SnapshotFrame(this, new NewFrameEventArgs(image));
             }
         }
 
         //
         // Video grabber
         //
-        private class Grabber : ISampleGrabberCB
-        {
-            private VideoCaptureDevice parent;
-            private bool snapshotMode;
-            private int width, height;
+        private class Grabber : ISampleGrabberCB {
+            private readonly VideoCaptureDevice parent;
+            private readonly bool snapshotMode;
+            private int count = 0;
 
             // Width property
-            public int Width
-            {
-                get { return width; }
-                set { width = value; }
-            }
+            public int Width { get; set; }
             // Height property
-            public int Height
-            {
-                get { return height; }
-                set { height = value; }
-            }
+            public int Height { get; set; }
 
             // Constructor
-            public Grabber( VideoCaptureDevice parent, bool snapshotMode )
-            {
+            public Grabber(VideoCaptureDevice parent, bool snapshotMode) {
                 this.parent = parent;
                 this.snapshotMode = snapshotMode;
             }
 
             // Callback to receive samples
-            public int SampleCB( double sampleTime, IntPtr sample )
-            {
-                return 0;
-            }
+            public int SampleCB(double sampleTime, IntPtr sample) => 0;
 
             // Callback method that receives a pointer to the sample buffer
-            public int BufferCB( double sampleTime, IntPtr buffer, int bufferLen )
-            {
-                if ( parent.NewFrame != null )
-                {
-                    System.Drawing.Bitmap image = null;
-
-                    if ( !parent.jpegEncodingEnabled )
-                    {
+            public int BufferCB(double sampleTime, IntPtr buffer, int bufferLen) {
+                if(this.count++ == 0) {
+                    return 0;
+                }
+                if(parent.NewFrame != null) {
+                    //if(this.snapshotMode && parent.Source.Contains("vid_0c45&pid_6369")) {
+                    //    parent.OnSnapshotFrame(null);
+                    //    return 0;
+                    //}
+                    Bitmap image;
+                    if(!parent.jpegEncodingEnabled) {
                         // create new image
-                        image = new Bitmap( width, height, PixelFormat.Format24bppRgb );
+                        image = new Bitmap(Width, Height, PixelFormat.Format24bppRgb);
 
                         // lock bitmap data
                         BitmapData imageData = image.LockBits(
-                            new Rectangle( 0, 0, width, height ),
+                            new Rectangle(0, 0, Width, Height),
                             ImageLockMode.ReadWrite,
-                            PixelFormat.Format24bppRgb );
+                            PixelFormat.Format24bppRgb);
 
                         // copy image data
                         int srcStride = imageData.Stride;
                         int dstStride = imageData.Stride;
 
-                        unsafe
-                        {
-                            byte* dst = (byte*) imageData.Scan0.ToPointer( ) + dstStride * ( height - 1 );
-                            byte* src = (byte*) buffer.ToPointer( );
+                        unsafe {
+                            byte* dst = (byte*)imageData.Scan0.ToPointer() + dstStride * (Height - 1);
+                            byte* src = (byte*)buffer.ToPointer();
 
-                            for ( int y = 0; y < height; y++ )
-                            {
-                                Win32.memcpy( dst, src, srcStride );
+                            for(int y = 0; y < Height; y++) {
+                                Win32.memcpy(dst, src, srcStride);
                                 dst -= dstStride;
                                 src += srcStride;
                             }
                         }
 
                         // unlock bitmap data
-                        image.UnlockBits( imageData );
-                    }
-                    else
-                    {
-                        unsafe
-                        {
-                            image = (Bitmap)Bitmap.FromStream( new UnmanagedMemoryStream( (byte*)buffer.ToPointer( ), bufferLen ) );
+                        image.UnlockBits(imageData);
+                    } else {
+                        unsafe {
+                            image = (Bitmap)Bitmap.FromStream(new UnmanagedMemoryStream((byte*)buffer.ToPointer(), bufferLen));
                         }
                     }
 
-                    if ( image != null )
-                    {
+                    if(image != null) {
                         // notify parent
-                        if (snapshotMode)
-                        {
-                            parent.OnSnapshotFrame( image );
-                        }
-                        else
-                        {
-                            parent.OnNewFrame( image );
+                        if(snapshotMode) {
+                            parent.OnSnapshotFrame(image);
+                        } else {
+                            parent.OnNewFrame(image);
                         }
 
                         // release the image
-                        image.Dispose( );
+                        image.Dispose();
                     }
                 }
 
